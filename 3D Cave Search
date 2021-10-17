@@ -1,0 +1,609 @@
+
+/**
+ * ================================================================================
+ * 
+ * -------------------- Exploration of underground cave system --------------------
+ * 
+ * ================================================================================
+ */
+import java.io.*;
+import java.util.*;
+
+public class Search {
+
+    static final String INPUT_FILE_NAME = "input.txt";
+    static final String OUTPUT_FILE_NAME = "output.txt";
+
+    static final String METHOD_BFS = "BFS";
+    static final String METHOD_UCS = "UCS";
+    static final String METHOD_A_STAR = "A*";
+
+    static final double UNIT_PATH_COST = 1;
+    static final double TWO_D_PATH_COST = 10;
+    static final double THREE_D_PATH_COST = 14;
+
+    static final double INFINITY = Double.MAX_VALUE;
+
+    static String method = "";      // Input method name
+    static int xSize = 0, ySize = 0, zSize = 0;     // Input max cave coordinates(size) for x, y and z axes
+    static int N = 0;       // Input number of valid grid points
+    static CaveNode start = null;   // Input start point
+    static CaveNode end = null;     // Input end point
+
+    static Map<String, CaveNode> nodeMap = null;    // Key - node id in string format: "x,y,z", Value - grid node 
+    static Map<Integer, String> idMap = null;       // Key - unique integer id for node from 0 to N, Value - grid node 
+
+    static Map<Integer, Coordinates> actionMap = null;  // Key - action number, Value - Possible action to be performed (x,y,z)
+    static {
+        actionMap = new HashMap<Integer, Coordinates>();
+        actionMap.put(1, new Coordinates(1,0,0));
+        actionMap.put(2, new Coordinates(-1,0,0));
+        actionMap.put(3, new Coordinates(0,1,0));
+        actionMap.put(4, new Coordinates(0,-1,0));
+        actionMap.put(5, new Coordinates(0,0,1));
+        actionMap.put(6, new Coordinates(0,0,-1));
+        actionMap.put(7, new Coordinates(1,1,0));
+        actionMap.put(8, new Coordinates(1,-1,0));
+        actionMap.put(9, new Coordinates(-1,1,0));
+        actionMap.put(10, new Coordinates(-1,-1,0));
+        actionMap.put(11, new Coordinates(1,0,1));
+        actionMap.put(12, new Coordinates(1,0,-1));
+        actionMap.put(13, new Coordinates(-1,0,1));
+        actionMap.put(14, new Coordinates(-1,0,-1));
+        actionMap.put(15, new Coordinates(0,1,1));
+        actionMap.put(16, new Coordinates(0,1,-1));
+        actionMap.put(17, new Coordinates(0,-1,1));
+        actionMap.put(18, new Coordinates(0,-1,-1));
+    }
+
+    static class Coordinates {  // (x,y,z) node for persisting the coordinate values of node and actions
+        int x;
+        int y;
+        int z;
+
+        public Coordinates() {}
+
+        public Coordinates(int x, int y, int z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+    }
+
+    static class CaveNode {     // Cave grid node
+        int id;     // Unique integer identifier for grid node from 0 to N to identify node using idMap
+        String nodeId;  // Unique string identifier in the form of "x,y,z" to identify the node using nodeMap
+        Coordinates axes;   // x, y, z coordinates of node
+        List<Integer> actions;  // possible valid list of actions for node
+        List<Frontier> frontiers;   // next possible child nodes in the cave after performing possible actions on node
+
+        public CaveNode() {}
+
+        public CaveNode(int x, int y, int z, int id) {
+            this.axes = new Coordinates(x, y, z);
+            this.nodeId = formatNodeId(this);
+            this.id = id;
+        }
+
+        public CaveNode(String x, String y, String z, int id) {
+            this(Integer.parseInt(x), Integer.parseInt(y), Integer.parseInt(z), id);
+        }
+    }
+
+    static class Frontier {     // Frontier(next valid node) to be expanded after an action is performed on the parent node
+        CaveNode fnode;     // Current frontier and its details
+        double cost;   // g(n) - Cost of path after using this current frontier
+        double heuristic = Double.MAX_VALUE;    // f(n) - Used for A* to find the minimum f(n) = g(n) + h(n), 
+                                                // where h(n) is the heuristic admissible function for current frontier
+        int actionPerformed;    // Action performed by parent to reach this current frontier.
+        public Frontier() { }
+    }
+
+    public static void main(String args[]) {
+        boolean isValid = readInput();
+        if (!isValid) {
+            returnFailure();
+            return;
+        }
+
+        int[] path = new int[N];    // preserve the id of previous node from which current node i is explored 
+                                    // with minimum distance for shortest overall path till destination
+        double[] dist = new double[N];    // preserve the shortest distance of current node i from start node
+        double[] cost = new double[N];    // preserve the weight of path of current node i from previous node
+
+        switch (method) {
+            case METHOD_BFS:
+                dist = bfsShortestPath(path, dist, cost);
+                break;
+            case METHOD_UCS:
+                dist = ucsShortestPath(path, dist, cost);
+                break;
+            case METHOD_A_STAR:
+                dist = aStarShortestPath(path, dist, cost);
+                break;
+            default:
+                dist = null;
+        }
+
+        writeOutput(path, dist, cost);
+    }
+
+    /**
+     * Read the input file and initialise all the cave dimensions and cave nodes.
+     * @return true is all inputs are valid, else false
+     */
+    public static boolean readInput() {
+        boolean isValid = true;
+        try {
+            FileInputStream fis = new FileInputStream(INPUT_FILE_NAME);
+            Scanner sc = new Scanner(fis);
+
+            int lineNum = 1;
+            String currentLine = "";
+            String[] lineSplit;
+
+            while(sc.hasNextLine()) {
+                currentLine = sc.nextLine();
+                switch (lineNum) {
+                    case 1:
+                        method = currentLine;
+                        break;
+                    case 2:
+                        lineSplit = currentLine.split(" ");
+                        xSize = Integer.parseInt(lineSplit[0]);
+                        ySize = Integer.parseInt(lineSplit[1]);
+                        zSize = Integer.parseInt(lineSplit[2]);
+                        break;
+                    case 3:
+                        lineSplit = currentLine.split(" ");
+                        start = new CaveNode(lineSplit[0] , lineSplit[1], lineSplit[2], -1);
+                        if (!isValidNode(lineSplit[0], lineSplit[1], lineSplit[2]))
+                            return false;
+                        break;
+                    case 4:
+                        lineSplit = currentLine.split(" ");
+                        end = new CaveNode(lineSplit[0] , lineSplit[1], lineSplit[2], -1);
+                        if (!isValidNode(lineSplit[0], lineSplit[1], lineSplit[2]))
+                            return false;
+                        break;
+                    case 5:
+                        N = Integer.parseInt(currentLine);
+                        nodeMap = new HashMap<String, CaveNode>();
+                        idMap = new HashMap<Integer, String>();
+                        break;
+                    default:
+                        lineSplit = currentLine.split(" ");
+                        CaveNode newNode = new CaveNode(lineSplit[0] , lineSplit[1], lineSplit[2], lineNum - 6);
+                        newNode.actions = getValidActions(lineSplit);
+                        nodeMap.put(newNode.nodeId, newNode);
+                        idMap.put(lineNum - 6, newNode.nodeId);
+                }
+                lineNum++;
+            }
+            sc.close();
+
+            if (nodeMap.size() != N)
+                isValid = false;
+
+            for (Map.Entry<String, CaveNode> entry : nodeMap.entrySet()) {
+                populateFrontiers(entry.getValue());
+            }
+        } catch(IOException e) {
+            System.out.println("Error " + e.getLocalizedMessage());
+            isValid = false;
+        } catch (Exception e) {
+            System.out.println("Error " + e.getLocalizedMessage());
+            isValid = false;
+        }
+        return isValid;
+    }
+
+    /**
+     * Checks whether the given input node is within the cave system.
+     */
+    public static boolean isValidNode(String x, String y, String z) {
+        if (Integer.parseInt(x) > xSize || Integer.parseInt(y) > ySize || Integer.parseInt(z) > zSize)
+            return false;
+        return true;
+    }
+
+    /**
+     * Write the output to a file in the specified format -
+     * 1. Total cost of shortest optimal path from start to destination
+     * 2. Total number of nodes on the shortest optimal path
+     * 3. Cave nodes on the shortest path along with their path costs
+     */
+    public static void writeOutput(int[] path, double[] dist, double[] cost) {
+        try {
+            FileWriter fileWriter = new FileWriter(OUTPUT_FILE_NAME);
+            PrintWriter printWriter = new PrintWriter(fileWriter);
+            CaveNode startNode = nodeMap.get(formatNodeId(start));
+            CaveNode endNode = nodeMap.get(formatNodeId(end));
+
+            if (startNode == null || endNode == null || dist == null) {
+                printWriter.print("FAIL");
+                printWriter.close();
+                return;
+            }
+
+            int s = startNode.id;
+            int i = endNode.id;
+            Stack<String> nodes = new Stack<String>();
+            while (s != i) {
+                if (path[i] == -1) {
+                    printWriter.print("FAIL");
+                    printWriter.close();
+                    return;
+                }
+                nodes.add(idMap.get(path[i]));
+                i = path[i];
+            }
+
+            printWriter.print(String.format("%.0f", dist[endNode.id]) + "\n");
+            printWriter.print(nodes.size() + 1 + "\n");
+            CaveNode node = new CaveNode();
+            while (!nodes.isEmpty()) {
+                node = nodeMap.get(nodes.pop());
+                printWriter.printf("%d %d %d %s\n", node.axes.x, node.axes.y, node.axes.z, String.format("%.0f", cost[node.id]));
+            }
+            printWriter.printf("%d %d %d %s", end.axes.x, end.axes.y, end.axes.z, String.format("%.0f", (getCost(endNode, node))));
+            printWriter.close();
+        } catch (IOException e) {
+            System.out.println("Error " + e.getLocalizedMessage());
+        }
+    }
+
+    /**
+     * In case of bad input, return failure in output and terminate cave exploration.
+     */
+    public static void returnFailure() {
+        try {
+            FileWriter fileWriter = new FileWriter(OUTPUT_FILE_NAME);
+            PrintWriter printWriter = new PrintWriter(fileWriter);
+            printWriter.print("FAIL");
+            printWriter.close();
+        } catch (IOException e) {
+            System.out.println("Error " + e.getLocalizedMessage());
+        }
+    }
+
+    /**
+     * Use BFS to find shortest path between given start and end points in the cave.
+     */
+    public static double[] bfsShortestPath(int[] path, double[] dist, double[] cost) {
+        boolean[] visited = new boolean[N];
+
+        for(int i = 0; i < N; i++)
+        {
+            visited[i] = false;
+            path[i] = -1;
+            cost[i] = 0;
+            dist[i] = INFINITY;
+        }
+
+        CaveNode current = nodeMap.get(formatNodeId(start));
+        CaveNode destination = nodeMap.get(formatNodeId(end));
+        
+        if (current == null || destination == null)
+            return null;
+
+        dist[current.id] = 0;
+
+        Set<Integer> queue = new HashSet<>();
+        int frontierId;
+        double minCost;
+        double minDist;
+        int minIndex;
+        double pathCost;
+
+        while (true)
+        {
+            visited[current.id] = true;
+            if (current.frontiers != null) {
+                for (Frontier node : current.frontiers) {
+                    frontierId = node.fnode.id;
+                    if (visited[frontierId])
+                        continue;
+
+                    queue.add(frontierId);
+                    pathCost = getCost(node);
+                    minCost = dist[current.id] + pathCost;
+    
+                    if (minCost < dist[frontierId]) {
+                        dist[frontierId] = minCost;
+                        path[frontierId] = current.id;
+                        cost[frontierId] = pathCost;
+                    }
+                }
+            }
+
+            queue.remove(current.id);
+
+            if (current.id == destination.id)
+                break;
+
+            if (queue.isEmpty())
+                break;
+
+            minDist = INFINITY;
+            minIndex = 0;
+
+            for (int nodeId : queue) {
+                if (dist[nodeId] < minDist) {
+                    minDist = dist[nodeId];
+                    minIndex = nodeId;
+                }
+            }
+            current = nodeMap.get(idMap.get(minIndex));
+            if (current == null)
+                return null;
+        }
+        return dist;
+    }
+
+    /**
+     * Use UCS to find shortest path between given start and end points in the cave.
+     */
+    public static double[] ucsShortestPath(int[] path, double[] dist, double[] cost) {
+        boolean[] visited = new boolean[N];
+
+        CaveNode current = nodeMap.get(formatNodeId(start));
+        CaveNode destination = nodeMap.get(formatNodeId(end));
+
+        if (current == null || destination == null)
+            return null;
+
+        dist[current.id] = 0;
+
+        PriorityQueue<Frontier> queue = new PriorityQueue<Frontier>((a, b) -> { return Double.compare(a.cost, b.cost); });
+        Queue<Integer> idQueue = new LinkedList<Integer>();
+        Frontier fr = new Frontier();
+        fr.fnode = current;
+        queue.add(fr);
+        idQueue.add(fr.fnode.id);
+
+        int frontierId;
+        double minCost;
+
+        while (true)
+        {
+            visited[current.id] = true;
+            if (current.frontiers != null) {
+                for (Frontier node : current.frontiers) {
+                    frontierId = node.fnode.id;
+                    if (visited[frontierId])
+                        continue;
+                    node.cost = getCost(node);
+                    minCost = dist[current.id] + node.cost;
+
+                    if (idQueue.contains(node.fnode.id)) {
+                        if (minCost < dist[frontierId]) {
+                            dist[frontierId] = minCost;
+                            path[frontierId] = current.id;
+                            cost[frontierId] = node.cost;
+                            queue.remove(node);
+                            idQueue.remove(node.fnode.id);
+                            node.cost = minCost;
+                            queue.add(node);
+                            idQueue.add(node.fnode.id);
+                        }
+                    } else {
+                        dist[frontierId] = minCost;
+                        path[frontierId] = current.id;
+                        cost[frontierId] = node.cost;
+                        node.cost = minCost;
+                        queue.add(node);
+                        idQueue.add(node.fnode.id);
+                    }
+                }
+            }
+
+            queue.remove(fr);
+            idQueue.remove(fr.fnode.id);
+
+            if (current.id == destination.id)
+                break;
+
+            if (queue.isEmpty())
+                return null;
+
+            fr = queue.poll();
+            idQueue.remove(fr.fnode.id);
+            current = nodeMap.get(idMap.get(fr.fnode.id));
+            if (current == null)
+                return null;
+        }
+        return dist;
+    }
+
+    /**
+     * Use A* to find shortest path between given start and end points in the cave.
+     */
+    public static double[] aStarShortestPath(int[] path, double[] dist, double[] cost) {
+        boolean[] visited = new boolean[N];
+
+        CaveNode current = nodeMap.get(formatNodeId(start));
+        CaveNode destination = nodeMap.get(formatNodeId(end));
+
+        if (current == null || destination == null)
+            return null;
+
+        double heuristic = getHeuristic(current, destination);
+        dist[current.id] = 0;
+
+        PriorityQueue<Frontier> queue = new PriorityQueue<Frontier>(
+            (a, b) -> { return Double.compare(a.heuristic, b.heuristic); });
+        Queue<Integer> idQueue = new LinkedList<Integer>();
+
+        Frontier fr = new Frontier();
+        fr.fnode = current;
+        fr.heuristic = heuristic + dist[current.id];
+        queue.add(fr);
+        idQueue.add(fr.fnode.id);
+
+        int frontierId;
+        double minCost;
+
+        while (true)
+        {
+            visited[current.id] = true;
+            if (current.frontiers != null) {
+                for (Frontier node : current.frontiers) {
+                    frontierId = node.fnode.id;
+                    heuristic = getHeuristic(node.fnode, end);
+                    if (visited[frontierId])
+                        continue;
+                    node.cost = getCost(node);
+                    minCost = dist[current.id] + node.cost;
+
+                    if (idQueue.contains(node.fnode.id)) {
+                        if (minCost < dist[frontierId]) {
+                            dist[frontierId] = minCost;
+                            path[frontierId] = current.id;
+                            cost[frontierId] = node.cost;
+                            queue.remove(node);
+                            idQueue.remove(node.fnode.id);
+                            node.cost = minCost;
+                            node.heuristic = heuristic + minCost;
+                            queue.add(node);
+                            idQueue.add(node.fnode.id);
+                        }
+                    } else {
+                        dist[frontierId] = minCost;
+                        path[frontierId] = current.id;
+                        cost[frontierId] = node.cost;
+                        node.heuristic = heuristic + minCost;
+                        queue.add(node);
+                        idQueue.add(node.fnode.id);
+                    }
+                }
+            }
+
+            queue.remove(fr);
+            idQueue.remove(fr.fnode.id);
+
+            if (current.id == destination.id)
+                break;
+
+            if (queue.isEmpty())
+                return null;
+
+            fr = queue.poll();
+            idQueue.remove(fr.fnode.id);
+            current = nodeMap.get(idMap.get(fr.fnode.id));
+            if (current == null)
+                return null;
+        }
+        return dist;
+    }
+
+    /**
+     * Calculate admissible hueristic function h(n) for current node n.
+     * @return Distance of n to the end(destination) node * minimum path cost for A*
+     */
+    public static double getHeuristic(CaveNode start, CaveNode end) {
+        if (start == null || end == null)
+            return 0;
+        return Math.sqrt( (Math.pow(start.axes.x - end.axes.x, 2)) + (Math.pow(start.axes.y - end.axes.y, 2)) 
+            + (Math.pow(start.axes.z - end.axes.z, 2) ) * TWO_D_PATH_COST );
+    }
+
+    /**
+     * Get the path cost between two grid nodes.
+     * Not used in the code.
+     * @return 1 for BFS; 10 for 2D moves and 14 for 3D moves for UCS/A*
+     */
+    public static double getCost(CaveNode a, CaveNode b) {
+        if (a == null || b == null)
+            return 0;
+        if (a.id == b.id)
+            return 0;
+        if (method.equals(METHOD_BFS))
+            return UNIT_PATH_COST;
+        return Math.abs(a.axes.x - b.axes.x) + Math.abs(a.axes.y - b.axes.y) + Math.abs(a.axes.z - b.axes.z) >= 2
+            ? THREE_D_PATH_COST : TWO_D_PATH_COST;
+    }
+
+    /**
+     * Get the path cost between two grid nodes.
+     * @return 1 for BFS; 10 for 2D moves (actions 1 - 6) and 14 for 3D moves (actions 7 - 18) for UCS/A*
+     */
+    public static double getCost(Frontier a) {
+        if (a == null)
+            return 0;
+        if (method.equals(METHOD_BFS))
+            return UNIT_PATH_COST;
+        return a.actionPerformed > 6 ? THREE_D_PATH_COST : TWO_D_PATH_COST;
+    }
+
+    /**
+     * Get the possible actions list for a given input node.
+     * @return List of action ids so that we can use actionMap to fetch the actual action coordinates.
+     */
+    public static List<Integer> getValidActions(String[] currentLine) {
+        if (currentLine.length <= 3)
+            return null;
+        List<Integer> actions = new ArrayList<Integer>();
+        for (int i = 3; i < currentLine.length; i++) {
+            actions.add(Integer.parseInt(currentLine[i]));
+        }
+        return actions;
+    }
+
+    /**
+     * Based on the possible valid actions for a cave node,
+     * populate its frontiers by adding the action coordinates to the node coordinates.
+     */
+    public static void populateFrontiers(CaveNode node) {
+        if(node.actions == null)
+            return;
+        List<Frontier> frontiers = new ArrayList<Frontier>();
+        Coordinates ac;
+        Frontier frontier;
+        for (Integer action : node.actions) {
+            ac = actionMap.get(action);
+            frontier = new Frontier();
+            frontier.actionPerformed = action;
+            frontier.fnode = nodeMap.get(formatNodeId(node.axes.x + ac.x, node.axes.y + ac.y, node.axes.z + ac.z));
+            if (frontier != null && frontier.fnode != null 
+                    && frontier.fnode.axes.x <= xSize && frontier.fnode.axes.y <= ySize && frontier.fnode.axes.z <= zSize)
+                frontiers.add(frontier);
+        }
+        node.frontiers = frontiers;
+    }
+
+    /**
+     * Helper method for creating a unique id string in the form of "x,y,z" for a cave node.
+     */
+    public static String formatNodeId(CaveNode node) {
+        return formatNodeId(node.axes.x, node.axes.y, node.axes.z);
+    }
+
+    /**
+     * Helper method for creating a unique id string in the form of "x,y,z" for axes of a cave node.
+     */
+    public static String formatNodeId(int x, int y, int z) {
+        return String.valueOf(x) + ',' + String.valueOf(y) + ',' + String.valueOf(z);
+    }
+
+    /**
+     * Helper method for printing the shortest path from start to end.
+     * Only used for debugging/visualising the cave system.
+     * Not used in the code.
+     */
+    public static void printPath(int[] path, int i, int s) {
+        Stack<String> nodes = new Stack<String>();
+        while (s != i) {
+            if (path[i] == -1) {
+                System.out.print("FAIL");
+                return;
+            }
+            nodes.add(idMap.get(path[i]) + " -> ");
+            i = path[i];
+        }
+        while (!nodes.isEmpty()) {
+            System.out.print(nodes.pop());
+        }
+        System.out.print(end.nodeId);
+    }
+}
